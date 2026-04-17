@@ -8,8 +8,31 @@
 **Author:** Claude (Opus 4.7)
 **For:** Mark Allen Evans @ AiAssist / Interchained
 **Date:** 2026-04-16
-**Spec version:** 1.1 (feedback-integrated, ready to publish)
+**Spec version:** 1.2 (reference implementation + conformance + the principle)
 **License:** MIT
+
+---
+
+## Contents
+
+- [Why this document exists](#why-this-document-exists)
+- [1. Design principles](#1-design-principles)
+- [2. The mental model](#2-the-mental-model)
+- [3. The protocol envelope](#3-the-protocol-envelope)
+- [4. Tools](#4-tools) — `listen` · `inspect` · `dispatch`
+- [5. Resources](#5-resources) — `catalog` · `lexicon` · `playbooks`
+- [6. Prompts](#6-prompts) — `sweep` · `triage` · `brief`
+- [7. Error model](#7-error-model)
+- [8. Capabilities declaration](#8-capabilities-declaration)
+- [9. Non-goals](#9-non-goals)
+- [10. Open design questions](#10-open-design-questions)
+- [11. What this spec deliberately leaves to the implementation](#11-what-this-spec-deliberately-leaves-to-the-implementation)
+- [12. What makes this different from "wrap the REST API"](#12-what-makes-this-different-from-wrap-the-rest-api)
+- [13. What needs to be built](#13-what-needs-to-be-built)
+- [14. Reference implementation sketch](#14-reference-implementation-sketch)
+- [15. Conformance checklist](#15-conformance-checklist)
+- [16. The one principle above all others](#16-the-one-principle-above-all-others)
+- [17. Closing note](#17-closing-note)
 
 ---
 
@@ -595,7 +618,239 @@ Ship `listen` + `signal://lexicon` + `sweep` prompt as v0.1. That's a usable MVP
 
 ---
 
-## 14. Closing note
+## 14. Reference implementation sketch
+
+A minimal TypeScript skeleton that satisfies the spec. Not production code — a *shape* you can crib from. Uses the official MCP TypeScript SDK.
+
+```ts
+// server.ts
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
+
+const server = new McpServer(
+  { name: "signal", version: "1.0.0" },
+  { capabilities: { tools: {}, resources: { subscribe: true }, prompts: {} } }
+);
+
+// ─── TOOLS ─────────────────────────────────────────────────
+
+server.tool(
+  "listen",
+  "Scan public sources for signals matching a query. The query is natural language — the server handles keyword expansion. Returns a stream of ranked signals with intent classification. Freshness defaults to this_week; omit `scope.sources` to let the server pick intelligently based on the query.",
+  {
+    query: z.string(),
+    scope: z.object({
+      sources: z.array(z.string()).optional(),
+      freshness: z.enum(["last_hour", "today", "this_week", "this_month", "any"]).default("this_week"),
+      min_engagement: z.number().int().optional(),
+    }).optional(),
+    intent_filter: z.array(z.enum([
+      "buying", "evaluating", "hiring", "complaining", "recommending",
+      "learning", "building", "announcing", "asking", "comparing"
+    ])).optional(),
+    limit: z.number().int().max(100).default(20),
+  },
+  async (args) => {
+    // Implementation:
+    // 1. Expand args.query into keywords (LLM or hybrid retrieval)
+    // 2. If scope.sources omitted, pick sources from signal://catalog
+    //    based on query characteristics
+    // 3. Dispatch concurrent fetches, stream results as they arrive
+    // 4. Classify intent per signal, attach match_reason
+    // 5. Shape output per §4.1, return
+    const signals = await runListen(args);
+    return { content: [{ type: "text", text: JSON.stringify(signals) }] };
+  }
+);
+
+server.tool(
+  "inspect",
+  "Deep-dive on a single signal by ID. depth='surface' returns signal only. depth='thread' (default) adds comments. depth='author' adds posting history and role hint. Use 'author' for lead qualification, 'surface' for cache checks.",
+  {
+    signal_id: z.string(),
+    depth: z.enum(["surface", "thread", "author"]).default("thread"),
+  },
+  async ({ signal_id, depth }) => {
+    const result = await runInspect(signal_id, depth);
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  }
+);
+
+server.tool(
+  "dispatch",
+  "Take an action on a signal. Actions: archive, flag, route, draft_reply, schedule_followup. By default actions are STAGED — they don't fire. Set params.commit=true on a follow-up call with the returned handle to execute. Two-phase commit is the default for anything with side effects.",
+  {
+    signal_id: z.string(),
+    action: z.enum(["archive", "flag", "route", "draft_reply", "schedule_followup"]),
+    params: z.object({ commit: z.boolean().optional() }).passthrough().optional(),
+  },
+  async (args) => {
+    const outcome = await runDispatch(args);
+    return { content: [{ type: "text", text: JSON.stringify(outcome) }] };
+  }
+);
+
+// ─── RESOURCES ─────────────────────────────────────────────
+
+server.resource(
+  "catalog",
+  "signal://catalog",
+  { mimeType: "application/json", description: "Source registry with strengths/weaknesses metadata." },
+  async () => ({
+    contents: [{ uri: "signal://catalog", mimeType: "application/json", text: JSON.stringify(await loadCatalog()) }]
+  })
+);
+
+server.resource(
+  "lexicon",
+  "signal://lexicon",
+  { mimeType: "text/markdown", description: "Intent vocabulary with definitions, examples, and false-positive guidance." },
+  async () => ({
+    contents: [{ uri: "signal://lexicon", mimeType: "text/markdown", text: await loadLexicon() }]
+  })
+);
+
+server.resource(
+  "playbooks",
+  "signal://playbooks",
+  { mimeType: "application/json", description: "Executable workflow recipes composed of listen/inspect/dispatch calls." },
+  async () => ({
+    contents: [{ uri: "signal://playbooks", mimeType: "application/json", text: JSON.stringify(await loadPlaybooks()) }]
+  })
+);
+
+// ─── PROMPTS ───────────────────────────────────────────────
+
+server.prompt(
+  "sweep",
+  "Scope a listen call by asking the user for an audience and timeframe.",
+  { audience: z.string(), timeframe: z.string().optional(), depth: z.string().optional() },
+  async ({ audience, timeframe, depth }) => ({
+    messages: [{ role: "user", content: { type: "text", text: buildSweepPrompt(audience, timeframe, depth) } }]
+  })
+);
+
+// (triage and brief follow the same pattern)
+
+// ─── TRANSPORT ─────────────────────────────────────────────
+
+// Streamable HTTP — single endpoint, POST + optional SSE upgrade on GET
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => crypto.randomUUID(),
+  onsessioninitialized: (sid) => console.log(`session ${sid} opened`),
+  // Required: validate Origin header per MCP spec
+  // (SDK exposes this via middleware; validate against your allowlist)
+});
+
+await server.connect(transport);
+```
+
+**Errors — the structured shape:**
+
+```ts
+// When rate-limited, throw with structured data
+throw {
+  code: -32002,
+  message: "Rate limit exceeded for source 'twitter'",
+  data: {
+    retry_after_seconds: 900,
+    affected_sources: ["twitter"],
+    suggested_action: "Retry with sources omitting 'twitter', or wait and retry all."
+  }
+};
+```
+
+That's the whole skeleton. ~80 lines for all nine surfaces (3 tools + 3 resources + 3 prompts), plus transport. The implementation work lives inside `runListen`, `runInspect`, `runDispatch`, `loadCatalog`, `loadLexicon`, `loadPlaybooks`, and the intent classifier. Those are where the product is. The protocol surface is boring, and it should be.
+
+**Python equivalent** — same shape using the `mcp` Python SDK:
+
+```python
+from mcp.server import Server
+from mcp.server.streamable_http import streamable_http_server
+from mcp import types
+
+server = Server("signal")
+
+@server.call_tool()
+async def listen(name, arguments):
+    # Same logic as the TS version
+    ...
+
+# Resources and prompts follow the decorator pattern
+```
+
+---
+
+## 15. Conformance checklist
+
+An implementation conforms to this spec if it passes every item below. Use this as a test plan or a review gate.
+
+**Protocol layer:**
+
+- [ ] Streamable HTTP endpoint at a single URL accepts POST and GET
+- [ ] `initialize` returns `protocolVersion: "2025-11"` and the capabilities block from §8
+- [ ] `Mcp-Session-Id` header issued on `initialize`, echoed on every subsequent request
+- [ ] `Origin` header validated on every request; rejects missing or disallowed origins
+- [ ] `ping` method responds within 100ms
+- [ ] JSON-RPC errors follow the `-32xxx` code convention
+- [ ] All errors include `data.suggested_action` where a recovery path exists
+
+**Tools:**
+
+- [ ] `tools/list` returns exactly three tools: `listen`, `inspect`, `dispatch`
+- [ ] `listen` accepts a natural-language `query` string as required input
+- [ ] `listen` with only `query` (no other params) returns results — defaults work
+- [ ] `listen` results include all fields from §4.1 output shape, including `match_reason` and `intent_confidence`
+- [ ] `listen` streams partial results (first result ≤ 500ms, or the implementation documents why not)
+- [ ] `inspect` supports all three depth levels: `surface`, `thread`, `author`
+- [ ] `dispatch` returns `status: "staged"` by default; only fires side effects when `params.commit: true`
+- [ ] `dispatch` returns a `handle` for every call
+
+**Resources:**
+
+- [ ] `resources/list` returns exactly three URIs: `signal://catalog`, `signal://lexicon`, `signal://playbooks`
+- [ ] `signal://catalog` includes `strengths` and `weaknesses` arrays for every source
+- [ ] `signal://lexicon` covers every intent value returned by `listen`
+- [ ] `signal://playbooks` entries use only tool/arg combinations valid under this spec
+- [ ] Resource subscriptions work for `catalog` and `playbooks`
+- [ ] `resources/read` on any listed URI succeeds without authentication beyond the session bearer
+
+**Prompts:**
+
+- [ ] `prompts/list` returns exactly three prompts: `sweep`, `triage`, `brief`
+- [ ] `sweep` with minimum arguments produces a runnable prompt
+
+**Observability:**
+
+- [ ] Every tool call logs session ID, tool name, client name, client version, latency
+- [ ] Errors are logged with their structured `data` payload intact
+
+**Launch-blocking:**
+
+- [ ] Passes `npx @modelcontextprotocol/inspector` without warnings
+- [ ] Works in Claude Desktop with only a config entry — no additional setup
+- [ ] Works in Cursor and Windsurf with the same config pattern
+
+A partial implementation is allowed to fail any item, but should declare which ones in its README. "Signal-compatible, conformance-level A/B/C" is a reasonable future versioning scheme.
+
+---
+
+## 16. The one principle above all others
+
+If you only remember one thing from this document, remember this:
+
+> **The best MCP server is invisible to the agent's reasoning.**
+
+Meaning: a great server lets the agent think about *its user's goal*, not about the server's quirks. Bad servers force the agent to translate between "what the user wants" and "what weird shape this API expects." Good servers are shaped so the agent's natural reasoning compiles directly into correct tool calls.
+
+You can measure this. Take a hundred real user requests. Feed them to an agent with your MCP server connected. Count how many complete without the agent having to *reshape* the request. That ratio is your design quality. Everything in this document is in service of getting that number close to 1.0.
+
+The rest of the spec — the tool shapes, the resource structure, the two-phase commits — is just the application of this principle to the signal intelligence domain.
+
+---
+
+## 17. Closing note
 
 The goal of this document wasn't to describe what exists. It was to describe what *should* exist. Whether you build this, something like it, or something entirely different, the principles in §1 are portable. Use them. Discard them. Argue with them.
 
