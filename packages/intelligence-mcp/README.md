@@ -2,9 +2,9 @@
 
 Reference implementation of the **[Signal MCP spec](../../README.md)** — an opinionated MCP server for signal intelligence, built on top of [api.aiassist.net](https://api.aiassist.net).
 
-> Status: **v0.1 scaffold.** Ships the full surface area (three tools, three resources, three prompts per spec §2) so MCP clients see the right tool list. `signal://lexicon` and the `sweep` prompt are live. `listen`, `inspect`, `dispatch`, `signal://catalog`, `signal://playbooks`, `triage`, and `brief` return structured `-32002` errors with `suggested_action` until v1.0.
+> Status: **v1.0.** All three tools, three resources, and three prompts are live and wired to `api.aiassist.net`. Scoped to what the current backend supports per [REALITY.md](../../REALITY.md); future backend endpoints are catalogued in [BACKEND-GAPS.md](../../BACKEND-GAPS.md).
 
-Ship order follows spec **§13**: `listen` + `signal://lexicon` + `sweep` = v0.1 MVP.
+Ship order follows spec **§13**: v0.1 MVP shipped `listen` + `signal://lexicon` + `sweep`; v1.0 fills out the remaining surfaces.
 
 ---
 
@@ -33,6 +33,7 @@ Get a key at [aiassist.net](https://aiassist.net). BYOK for the underlying LLM p
 Optional:
 
 - `AIAS_API_BASE_URL` — override the API base (default `https://api.aiassist.net`).
+- `AIAS_ORG_ID` — org scoping for `archive` / `flag` dispatch side effects. Defaults to `"default"` (fine for single-user stdio).
 
 ## Claude Desktop
 
@@ -70,17 +71,28 @@ Launches the official inspector pointed at the local build. Every surface should
 
 ## What's in the box
 
-| Surface | Type | v0.1 state |
+| Surface | Type | v1.0 state |
 |---|---|---|
-| `listen` | tool | schema + description final; pipeline stubbed |
-| `inspect` | tool | schema + description final; body ships v1.0 |
-| `dispatch` | tool | schema + description final; body ships v1.0 |
-| `signal://catalog` | resource | stubbed; awaiting authoritative source list |
-| `signal://lexicon` | resource | **live** — all 10 intents drafted per §4.1 |
-| `signal://playbooks` | resource | ships with v1.0 |
+| `listen` | tool | **live** — keyword expansion → scan → LLM intent classification → streamed via MCP progress notifications |
+| `inspect` | tool | **live** — cache-first lookup with rescan fallback; `depth: surface\|thread\|author` |
+| `dispatch` | tool | **live** — two-phase commit; `archive`/`flag`/`route`/`draft_reply`; `schedule_followup` returns `-32004` (see caveats) |
+| `signal://catalog` | resource | **live** — live source list from the API + 22 sources of MCP-side strengths/weaknesses |
+| `signal://lexicon` | resource | **live** — all 10 intents + v1.0 response-shape notes |
+| `signal://playbooks` | resource | **live** — 5 static recipes (competitor-churn, hiring-pulse, launch-watch, weekly-brief, buyer-triage) |
 | `sweep` | prompt | **live** — audience + timeframe + depth → scoped listen call |
-| `triage` | prompt | ships with v1.0 |
-| `brief` | prompt | ships with v1.0 |
+| `triage` | prompt | **live** — walks a listen batch → reusable filter spec |
+| `brief` | prompt | **live** — daily/weekly brief grouped by intent |
+
+### v1.0 response-shape caveats (REALITY.md §5)
+
+Two fields decorate `inspect` responses and declare honestly what the current backend can and cannot deliver:
+
+- `thread_completeness: "post_body_only"` on `depth=thread` / `depth=author` — the backend does not yet expose comment trees, so `thread` contains the OP body only. (BACKEND-GAPS §2.1)
+- `author_context.scope: "single_source"` on `depth=author` — author history is derived by rescanning the originating source only; cross-source identity resolution is unavailable. (BACKEND-GAPS §2.2)
+
+And one error return:
+
+- `dispatch action="schedule_followup"` → JSON-RPC `-32004`. No scheduler backing in v1.0 (BACKEND-GAPS §3.5). Substitute `action="flag"` with a note or `action="route"` into CRM.
 
 ## Develop
 

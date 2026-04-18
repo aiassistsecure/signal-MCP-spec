@@ -5,10 +5,12 @@ import { createServer } from "./server.js";
 async function main(): Promise<void> {
   const apiKey = process.env["AIAS_API_KEY"];
   const apiBaseUrl = process.env["AIAS_API_BASE_URL"];
+  const orgId = process.env["AIAS_ORG_ID"];
 
   const { server } = createServer({
     apiKey,
     apiBaseUrl,
+    ...(orgId ? { orgId } : {}),
   });
 
   const transport = new StdioServerTransport();

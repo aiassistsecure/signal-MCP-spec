@@ -13,6 +13,114 @@ export interface ApiClientOptions {
   userAgentSuffix?: string;
 }
 
+// ─── Wire types (api.aiassist.net shapes per REALITY.md §0 / §4.1) ─────────
+
+export interface IntelEnvelopeMeta {
+  request_id?: string;
+  timestamp: string;
+  version: string;
+  org_id: string;
+  processing_ms: number;
+}
+
+export interface IntelEnvelope<T> {
+  data: T;
+  meta: IntelEnvelopeMeta;
+}
+
+export interface IntelSource {
+  name: string;
+  premium: boolean;
+  provider: "free" | "netrows";
+}
+
+export interface IntelScanRequest {
+  sources: string[];
+  keywords?: string[];
+  limit?: number;
+  category?: string;
+  subreddits?: string[];
+}
+
+export interface IntelSignal {
+  id: string;
+  source: string;
+  subreddit?: string;
+  title: string;
+  body?: string;
+  content?: string;
+  url: string;
+  author: string;
+  score: number;
+  num_comments: number;
+  created_utc: number;
+}
+
+export interface IntelScanData {
+  results: IntelSignal[];
+  total: number;
+  sources_scanned: string[];
+  sources_failed: { source: string; error: string }[];
+}
+
+export interface ExtractKeywordsRequest {
+  prompt: string;
+  existing_keywords?: string[];
+  model?: string;
+  provider?: string;
+}
+
+export interface ExtractKeywordsData {
+  keywords: string[];
+  [k: string]: unknown;
+}
+
+export interface ChatCompletionMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatCompletionRequest {
+  model?: string;
+  messages: ChatCompletionMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  response_format?: { type: "json_object" };
+}
+
+export interface ChatCompletionResponse {
+  choices: { message: { role: string; content: string } }[];
+  model: string;
+  [k: string]: unknown;
+}
+
+export interface ContactCreateBody {
+  name: string;
+  email?: string | null;
+  source?: string;
+  notes?: string;
+  lifecycle_stage?: string;
+  workspace_id?: string;
+}
+
+export interface ContactCreateResponse {
+  id: string;
+  [k: string]: unknown;
+}
+
+export interface LeadCaptureBody {
+  email: string;
+  name?: string;
+  source?: string;
+  notes?: string;
+  workspace_id?: string;
+}
+
+export interface LeadCaptureResponse {
+  id: string;
+  [k: string]: unknown;
+}
+
 export class ApiClientError extends Error {
   readonly status: number;
   readonly body: unknown;
@@ -68,8 +176,41 @@ export class ApiClient {
     return this.request<T>("POST", path, body, opts);
   }
 
+  async patch<T>(path: string, body: unknown, opts: RequestOptions = {}): Promise<T> {
+    return this.request<T>("PATCH", path, body, opts);
+  }
+
+  // ─── Typed endpoint helpers ──────────────────────────────────────────────
+
+  intelSources(opts?: RequestOptions): Promise<IntelEnvelope<{ sources: IntelSource[] }>> {
+    return this.get("/v1/intelligence/sources", opts ?? {});
+  }
+
+  intelScan(body: IntelScanRequest, opts?: RequestOptions): Promise<IntelEnvelope<IntelScanData>> {
+    return this.post("/v1/intelligence/scan", body, opts ?? {});
+  }
+
+  intelExtractKeywords(
+    body: ExtractKeywordsRequest,
+    opts?: RequestOptions,
+  ): Promise<IntelEnvelope<ExtractKeywordsData>> {
+    return this.post("/v1/intelligence/extract-keywords", body, opts ?? {});
+  }
+
+  chatCompletion(body: ChatCompletionRequest, opts?: RequestOptions): Promise<ChatCompletionResponse> {
+    return this.post("/v1/chat/completions", body, opts ?? {});
+  }
+
+  createContact(body: ContactCreateBody, opts?: RequestOptions): Promise<ContactCreateResponse> {
+    return this.post("/api/contacts", body, opts ?? {});
+  }
+
+  captureLead(body: LeadCaptureBody, opts?: RequestOptions): Promise<LeadCaptureResponse> {
+    return this.post("/api/leads/capture", body, opts ?? {});
+  }
+
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH",
     path: string,
     body: unknown,
     opts: RequestOptions,

@@ -175,6 +175,19 @@ Thresholding: treat \`intent_confidence < 0.6\` as "guess" and confirm with \`in
 - The classifier labels **single intent** per signal — the strongest match. Some posts legitimately carry two intents (e.g., \`complaining\` + \`evaluating\` — "fed up with Clay, what else is out there?"); the classifier picks the stronger signal and the \`match_reason\` field will usually explain the tie.
 - Confidence below 0.6 is a flag to \`inspect\` before acting.
 - The vocabulary is versioned with the spec. Future splits (e.g., \`complaining_price\` vs \`complaining_reliability\` — see §10 Q4) will be additive.
+
+---
+
+## v1.0 response-shape deltas (REALITY.md §5)
+
+Two fields may appear on \`inspect\` responses that are not in the public spec — they declare honestly what the current backend can and cannot provide. Both will go away when the backend adds first-class endpoints (BACKEND-GAPS §2).
+
+- \`thread_completeness: "post_body_only"\` — on \`depth=thread\` or \`depth=author\` responses. Means the \`thread\` array contains only the original post's body, not the comment tree. The backend scanner does not yet return comments; do not synthesize them.
+- \`author_context.scope: "single_source"\` — on \`depth=author\` responses. Means the author history was derived by rescanning the signal's originating source only (e.g., reddit-only for a reddit signal). Cross-source identity resolution is not available; treat this scope as a reasonable-but-partial qualification signal, not a full profile.
+
+Neither field implies the response is an error. They are deliberate, stable v1.0 shapes — treat them as informational metadata and continue the workflow.
+
+Similarly, \`dispatch action="schedule_followup"\` returns JSON-RPC error \`-32004\` in v1.0 (REALITY.md §2 / BACKEND-GAPS §3.5). Until the scheduler backing ships, substitute \`action="flag"\` with a note or \`action="route"\` into CRM.
 `;
 
 export function registerLexiconResource(server: McpServer): void {
