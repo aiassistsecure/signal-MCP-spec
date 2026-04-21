@@ -1,0 +1,70 @@
+{
+  "name": "@aiassist-secure/intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Reference implementation of the Signal MCP spec — signal intelligence for agents. Ships `listen` + `signal://lexicon` + `sweep` as v0.1 MVP.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "signal",
+    "intelligence",
+    "aiassist",
+    "reddit",
+    "hackernews",
+    "agent"
+  ],
+  "author": "Mark Allen Evans <mark@aiassist.net>",
+  "license": "MIT",
+  "homepage": "https://github.com/aiassistsecure/signal-MCP-spec#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiassistsecure/signal-MCP-spec.git",
+    "directory": "packages/intelligence-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/aiassistsecure/signal-MCP-spec/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "signal-mcp": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
